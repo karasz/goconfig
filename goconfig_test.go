@@ -59,10 +59,9 @@ func ExampleParse() {
 	if err != nil {
 		log.Fatalf("Error on line %d: %v\n", lineno, err)
 	}
-	fmt.Println()
-	fmt.Println(lineno)
-	fmt.Println(config["user.name"])
-	fmt.Println(config["user.email"])
+	_, _ = fmt.Println(lineno)
+	_, _ = fmt.Println(config["user.name"])
+	_, _ = fmt.Println(config["user.email"])
 	// Output:
 	// 10
 	// Danyel Bayraktar
@@ -78,6 +77,6 @@ func BenchmarkParse(b *testing.B) {
 
 	b.ResetTimer()
 	for n := 0; n < b.N; n++ {
-		Parse(bytes)
+		_, _, _ = Parse(bytes)
 	}
 }

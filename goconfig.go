@@ -1,40 +1,30 @@
+// Package goconfig parses .gitconfig style files
 package goconfig
 
-const utf8BOM = "\357\273\277"
+import (
+	"unicode"
+)
 
 type parser struct {
-	bytes  []byte
+	runes  []rune
 	linenr uint
 	eof    bool
 }
 
 // Parse takes given bytes as configuration file (according to gitconfig syntax)
 func Parse(bytes []byte) (map[string]string, uint, error) {
-	parser := &parser{bytes, 1, false}
+	parser := &parser{[]rune(string(bytes)), 1, false}
 	cfg, err := parser.parse()
 	return cfg, parser.linenr, err
 }
 
 func (cf *parser) parse() (map[string]string, error) {
-	bomPtr := 0
 	comment := false
 	cfg := map[string]string{}
 	name := ""
 	var err error
 	for {
-		c := cf.nextChar()
-		if bomPtr != -1 && bomPtr < len(utf8BOM) {
-			if c == (utf8BOM[bomPtr] & 0377) {
-				bomPtr++
-				continue
-			} else {
-				/* Do not tolerate partial BOM. */
-				if bomPtr != 0 {
-					return cfg, ErrPartialBOM
-				}
-				bomPtr = -1
-			}
-		}
+		c := cf.nextRune()
 		if c == '\n' {
 			if cf.eof {
 				return cfg, nil
@@ -69,35 +59,35 @@ func (cf *parser) parse() (map[string]string, error) {
 	}
 }
 
-func (cf *parser) nextChar() byte {
-	if len(cf.bytes) == 0 {
+func (cf *parser) nextRune() rune {
+	if len(cf.runes) == 0 {
 		cf.eof = true
-		return byte('\n')
+		return '\n'
 	}
-	c := cf.bytes[0]
+	c := cf.runes[0]
 	if c == '\r' {
 		/* DOS like systems */
-		if len(cf.bytes) > 1 && cf.bytes[1] == '\n' {
-			cf.bytes = cf.bytes[1:]
+		if len(cf.runes) > 1 && cf.runes[1] == '\n' {
+			cf.runes = cf.runes[1:]
 			c = '\n'
 		}
 	}
 	if c == '\n' {
 		cf.linenr++
 	}
-	if len(cf.bytes) == 0 {
+	if len(cf.runes) == 0 {
 		cf.eof = true
 		cf.linenr++
 		c = '\n'
 	}
-	cf.bytes = cf.bytes[1:]
+	cf.runes = cf.runes[1:]
 	return c
 }
 
 func (cf *parser) getSectionKey() (string, error) {
 	name := ""
 	for {
-		c := cf.nextChar()
+		c := cf.nextRune()
 		if cf.eof {
 			return "", ErrUnexpectedEOF
 		}
@@ -115,13 +105,13 @@ func (cf *parser) getSectionKey() (string, error) {
 }
 
 // config: [BaseSection "ExtendedSection"]
-func (cf *parser) getExtendedSectionKey(name string, c byte) (string, error) {
+func (cf *parser) getExtendedSectionKey(name string, c rune) (string, error) {
 	for {
 		if c == '\n' {
 			cf.linenr--
 			return "", ErrSectionNewLine
 		}
-		c = cf.nextChar()
+		c = cf.nextRune()
 		if !isspace(c) {
 			break
 		}
@@ -131,7 +121,7 @@ func (cf *parser) getExtendedSectionKey(name string, c byte) (string, error) {
 	}
 	name += "."
 	for {
-		c = cf.nextChar()
+		c = cf.nextRune()
 		if c == '\n' {
 			cf.linenr--
 			return "", ErrSectionNewLine
@@ -140,7 +130,7 @@ func (cf *parser) getExtendedSectionKey(name string, c byte) (string, error) {
 			break
 		}
 		if c == '\\' {
-			c = cf.nextChar()
+			c = cf.nextRune()
 			if c == '\n' {
 				cf.linenr--
 				return "", ErrSectionNewLine
@@ -148,20 +138,20 @@ func (cf *parser) getExtendedSectionKey(name string, c byte) (string, error) {
 		}
 		name += string(c)
 	}
-	if cf.nextChar() != ']' {
+	if cf.nextRune() != ']' {
 		return "", ErrMissingClosingBracket
 	}
 	return name, nil
 }
 
 func (cf *parser) getValue(name *string) (string, error) {
-	var c byte
+	var c rune
 	var err error
 	var value string
 
 	/* Get the full name */
 	for {
-		c = cf.nextChar()
+		c = cf.nextRune()
 		if cf.eof {
 			break
 		}
@@ -172,7 +162,7 @@ func (cf *parser) getValue(name *string) (string, error) {
 	}
 
 	for c == ' ' || c == '\t' {
-		c = cf.nextChar()
+		c = cf.nextRune()
 	}
 
 	if c != '\n' {
@@ -184,16 +174,6 @@ func (cf *parser) getValue(name *string) (string, error) {
 			return "", err
 		}
 	}
-	/*
-	 * We already consumed the \n, but we need linenr to point to
-	 * the line we just parsed during the call to fn to get
-	 * accurate line number in error messages.
-	 */
-	// cf.linenr--
-	// ret := fn(name->buf, value, data);
-	// if ret >= 0 {
-	// 	cf.linenr++
-	// }
 	return value, err
 }
 
@@ -205,7 +185,7 @@ func (cf *parser) parseValue() (string, error) {
 
 	// strbuf_reset(&cf->value);
 	for {
-		c := cf.nextChar()
+		c := cf.nextRune()
 		if c == '\n' {
 			if quote {
 				cf.linenr--
@@ -233,25 +213,16 @@ func (cf *parser) parseValue() (string, error) {
 			space--
 		}
 		if c == '\\' {
-			c = cf.nextChar()
+			c = cf.nextRune()
 			switch c {
 			case '\n':
 				continue
 			case 't':
 				c = '\t'
-				break
 			case 'b':
 				c = '\b'
-				break
 			case 'n':
 				c = '\n'
-				break
-			/* Some characters escape as themselves */
-			case '\\':
-				break
-			case '"':
-				break
-			/* Reject unknown escape sequences */
 			default:
 				return "", ErrInvalidEscapeSequence
 			}
@@ -266,26 +237,26 @@ func (cf *parser) parseValue() (string, error) {
 	}
 }
 
-func lower(c byte) byte {
-	return c | 0x20
+func lower(c rune) rune {
+	return unicode.ToLower(c)
 }
 
-func isspace(c byte) bool {
-	return c == '\t' || c == ' ' || c == '\n' || c == '\v' || c == '\f' || c == '\r'
+func isspace(c rune) bool {
+	return unicode.IsSpace(c)
 }
 
-func iskeychar(c byte) bool {
+func iskeychar(c rune) bool {
 	return isalnum(c) || c == '-'
 }
 
-func isalnum(c byte) bool {
+func isalnum(c rune) bool {
 	return isalpha(c) || isnum(c)
 }
 
-func isalpha(c byte) bool {
-	return c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z'
+func isalpha(c rune) bool {
+	return unicode.IsLetter(c)
 }
 
-func isnum(c byte) bool {
-	return c >= '0' && c <= '9'
+func isnum(c rune) bool {
+	return unicode.IsNumber(c)
 }
